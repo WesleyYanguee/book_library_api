@@ -1,7 +1,7 @@
 const express = require('express');
-const cors = require('cors'); // CORS middleware
+const cors = require('cors'); // Enable CORS
 const bodyParser = require('body-parser');
-const mysql = require('mysql');
+const mysql = require('mysql2'); // Using mysql2
 const fs = require('fs');
 const path = require('path');
 
@@ -14,16 +14,20 @@ app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for base64 i
 
 // MySQL Connection
 const connection = mysql.createConnection({
-    host: 'your-mysql-host',
-    user: 'your-username',
-    password: 'your-password',
+    host: 'gateway01.eu-central-1.prod.aws.tidbcloud.com',
+    user: '3SvqwQWBH7PTwSG.root',
+    password: '28BawPbCAKzBBNu7',
     database: 'test',
+    port: 4000,
+    ssl: {
+        rejectUnauthorized: true,
+    },
 });
 
 connection.connect((err) => {
     if (err) {
         console.error('Error connecting to MySQL:', err);
-        return;
+        process.exit(1); // Exit the application on connection failure
     }
     console.log('Connected to MySQL database');
 });
