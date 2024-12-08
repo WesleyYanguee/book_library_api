@@ -4,13 +4,14 @@ const bodyParser = require('body-parser');
 const mysql = require('mysql2'); // Using mysql2
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp'); // Image processing library
 
 const app = express();
 const port = 3000;
 
 // Middleware
 app.use(cors()); // Enable CORS for all routes
-app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for base64 images
+app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for Base64 images
 
 // Ensure the uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -42,26 +43,50 @@ connection.connect((err) => {
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Endpoint: Add a Book
-app.post('/books', (req, res) => {
+app.post('/books', async (req, res) => {
     const { title, author, genre, rating, description, image } = req.body;
 
     if (!title || !author || !genre || !rating || !description || !image) {
         return res.status(400).send({ message: 'All fields are required' });
     }
 
-    const imageBuffer = Buffer.from(image, 'base64');
-    const imagePath = `uploads/${Date.now()}.png`;
-    fs.writeFileSync(path.join(__dirname, imagePath), imageBuffer);
+    // Match image type from Base64 string
+    const imageTypeMatch = image.match(/^data:image\/(\w+);base64,/);
+    if (!imageTypeMatch) {
+        return res.status(400).send({ message: 'Invalid image format' });
+    }
 
+    // Extract Base64 data
+    const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+    const imageBuffer = Buffer.from(base64Data, 'base64');
+
+    // Generate the output file path (always save as .png)
+    const outputFilePath = `uploads/${Date.now()}.png`;
+
+    try {
+        // Resize the image to 720x400 from the center and save as PNG
+        await sharp(imageBuffer)
+            .resize(720, 400, {
+                fit: 'cover', // Ensures the image is cropped to fit 720x400
+                position: 'center', // Crops from the center
+            })
+            .png() // Convert to PNG
+            .toFile(path.join(__dirname, outputFilePath));
+    } catch (err) {
+        console.error('Error processing image:', err);
+        return res.status(500).send('Error processing image');
+    }
+
+    // Save book details to the database
     connection.query(
         'INSERT INTO books (title, author, genre, rating, description, cover_image) VALUES (?, ?, ?, ?, ?, ?)',
-        [title, author, genre, rating, description, imagePath],
+        [title, author, genre, rating, description, outputFilePath],
         (err, results) => {
             if (err) {
                 console.error('Error adding book:', err);
                 return res.status(500).send('Error adding book');
             }
-            res.status(201).send({ id: results.insertId, imagePath });
+            res.status(201).send({ id: results.insertId, imagePath: outputFilePath });
         }
     );
 });
@@ -84,20 +109,44 @@ app.get('/books', (req, res) => {
 });
 
 // Endpoint: Update a Book
-app.put('/books/:id', (req, res) => {
+app.put('/books/:id', async (req, res) => {
     const { id } = req.params;
     const { title, author, genre, rating, description, image } = req.body;
 
-    let imagePath = null;
+    let outputFilePath = null;
     if (image) {
-        const imageBuffer = Buffer.from(image, 'base64');
-        imagePath = `uploads/${Date.now()}.png`;
-        fs.writeFileSync(path.join(__dirname, imagePath), imageBuffer);
+        // Match image type from Base64 string
+        const imageTypeMatch = image.match(/^data:image\/(\w+);base64,/);
+        if (!imageTypeMatch) {
+            return res.status(400).send({ message: 'Invalid image format' });
+        }
+
+        // Extract Base64 data
+        const base64Data = image.replace(/^data:image\/\w+;base64,/, '');
+        const imageBuffer = Buffer.from(base64Data, 'base64');
+
+        // Generate the output file path (always save as .png)
+        outputFilePath = `uploads/${Date.now()}.png`;
+
+        try {
+            // Resize the image to 720x400 from the center and save as PNG
+            await sharp(imageBuffer)
+                .resize(720, 400, {
+                    fit: 'cover',
+                    position: 'center',
+                })
+                .png()
+                .toFile(path.join(__dirname, outputFilePath));
+        } catch (err) {
+            console.error('Error processing image:', err);
+            return res.status(500).send('Error processing image');
+        }
     }
 
+    // Update book details in the database
     connection.query(
         'UPDATE books SET title = ?, author = ?, genre = ?, rating = ?, description = ?, cover_image = IFNULL(?, cover_image) WHERE id = ?',
-        [title, author, genre, rating, description, imagePath, id],
+        [title, author, genre, rating, description, outputFilePath, id],
         (err, results) => {
             if (err) {
                 console.error('Error updating book:', err);
