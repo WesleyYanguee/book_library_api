@@ -1,5 +1,5 @@
 const express = require('express');
-const cors = require('cors'); // Enable CORS
+const cors = require('cors'); // CORS middleware
 const bodyParser = require('body-parser');
 const mysql = require('mysql2'); // Using mysql2
 const fs = require('fs');
@@ -12,6 +12,12 @@ const port = 3000;
 app.use(cors()); // Enable CORS for all routes
 app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for base64 images
 
+// Ensure the uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 // MySQL Connection
 const connection = mysql.createConnection({
     host: 'gateway01.eu-central-1.prod.aws.tidbcloud.com',
@@ -20,14 +26,14 @@ const connection = mysql.createConnection({
     database: 'test',
     port: 4000,
     ssl: {
-        rejectUnauthorized: true,
+        rejectUnauthorized: true, // Use SSL for secure connections
     },
 });
 
 connection.connect((err) => {
     if (err) {
         console.error('Error connecting to MySQL:', err);
-        process.exit(1); // Exit the application on connection failure
+        process.exit(1);
     }
     console.log('Connected to MySQL database');
 });
@@ -43,12 +49,10 @@ app.post('/books', (req, res) => {
         return res.status(400).send({ message: 'All fields are required' });
     }
 
-    // Save the image
     const imageBuffer = Buffer.from(image, 'base64');
     const imagePath = `uploads/${Date.now()}.png`;
     fs.writeFileSync(path.join(__dirname, imagePath), imageBuffer);
 
-    // Save book details to the database
     connection.query(
         'INSERT INTO books (title, author, genre, rating, description, cover_image) VALUES (?, ?, ?, ?, ?, ?)',
         [title, author, genre, rating, description, imagePath],
@@ -91,24 +95,17 @@ app.put('/books/:id', (req, res) => {
         fs.writeFileSync(path.join(__dirname, imagePath), imageBuffer);
     }
 
-    const query = `
-        UPDATE books
-        SET
-          title = ?,
-          author = ?,
-          genre = ?,
-          rating = ?,
-          description = ?,
-          cover_image = IFNULL(?, cover_image)
-        WHERE id = ?
-    `;
-    connection.query(query, [title, author, genre, rating, description, imagePath, id], (err, results) => {
-        if (err) {
-            console.error('Error updating book:', err);
-            return res.status(500).send('Error updating book');
+    connection.query(
+        'UPDATE books SET title = ?, author = ?, genre = ?, rating = ?, description = ?, cover_image = IFNULL(?, cover_image) WHERE id = ?',
+        [title, author, genre, rating, description, imagePath, id],
+        (err, results) => {
+            if (err) {
+                console.error('Error updating book:', err);
+                return res.status(500).send('Error updating book');
+            }
+            res.send({ message: 'Book updated successfully' });
         }
-        res.send({ message: 'Book updated successfully' });
-    });
+    );
 });
 
 // Endpoint: Delete Books (Bulk Delete)
