@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors'); // CORS middleware
 const bodyParser = require('body-parser');
 const mysql = require('mysql');
 const fs = require('fs');
@@ -8,6 +9,7 @@ const app = express();
 const port = 3000;
 
 // Middleware
+app.use(cors()); // Enable CORS for all routes
 app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for base64 images
 
 // MySQL Connection
