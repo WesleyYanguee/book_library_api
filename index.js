@@ -1,98 +1,132 @@
 const express = require('express');
-const cors = require('cors');
-const mysql = require('mysql2');
-require('dotenv').config();
+const bodyParser = require('body-parser');
+const mysql = require('mysql');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
+const port = 3000;
 
-app.use(cors());
-app.use(express.json());
+// Middleware
+app.use(bodyParser.json({ limit: '10mb' })); // Increase size limit for base64 images
 
-// Database connection
-const connection = mysql.createConnection(process.env.DATABASE_URL);
-
-// Test endpoint
-app.get('/', (req, res) => {
-    res.send('Welcome to the Book Library API!');
+// MySQL Connection
+const connection = mysql.createConnection({
+    host: 'your-mysql-host',
+    user: 'your-username',
+    password: 'your-password',
+    database: 'test',
 });
 
-// Get all books
+connection.connect((err) => {
+    if (err) {
+        console.error('Error connecting to MySQL:', err);
+        return;
+    }
+    console.log('Connected to MySQL database');
+});
+
+// Serve uploaded images
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Endpoint: Add a Book
+app.post('/books', (req, res) => {
+    const { title, author, genre, rating, description, image } = req.body;
+
+    if (!title || !author || !genre || !rating || !description || !image) {
+        return res.status(400).send({ message: 'All fields are required' });
+    }
+
+    // Save the image
+    const imageBuffer = Buffer.from(image, 'base64');
+    const imagePath = `uploads/${Date.now()}.png`;
+    fs.writeFileSync(path.join(__dirname, imagePath), imageBuffer);
+
+    // Save book details to the database
+    connection.query(
+        'INSERT INTO books (title, author, genre, rating, description, cover_image) VALUES (?, ?, ?, ?, ?, ?)',
+        [title, author, genre, rating, description, imagePath],
+        (err, results) => {
+            if (err) {
+                console.error('Error adding book:', err);
+                return res.status(500).send('Error adding book');
+            }
+            res.status(201).send({ id: results.insertId, imagePath });
+        }
+    );
+});
+
+// Endpoint: Fetch All Books
 app.get('/books', (req, res) => {
     connection.query('SELECT * FROM books', (err, results) => {
         if (err) {
             console.error('Error fetching books:', err);
-            res.status(500).send('Error fetching books');
-        } else {
-            res.send(results);
+            return res.status(500).send('Error fetching books');
         }
+
+        const books = results.map((book) => ({
+            ...book,
+            coverImageUrl: book.cover_image ? `http://localhost:${port}/${book.cover_image}` : null,
+        }));
+
+        res.send(books);
     });
 });
 
-// Get a book by ID
-app.get('/books/:id', (req, res) => {
-    const id = req.params.id;
-    connection.query('SELECT * FROM books WHERE id = ?', [id], (err, results) => {
-        if (err) {
-            console.error('Error fetching book by ID:', err);
-            res.status(500).send('Error fetching book');
-        } else {
-            res.send(results);
-        }
-    });
-});
-
-// Add a new book
-app.post('/books', (req, res) => {
-    const { title, author, genre, rating, description } = req.body;
-    connection.query(
-        'INSERT INTO books (title, author, genre, rating, description) VALUES (?, ?, ?, ?, ?)',
-        [title, author, genre, rating, description],
-        (err, results) => {
-            if (err) {
-                console.error('Error adding book:', err);
-                res.status(500).send('Error adding book');
-            } else {
-                res.status(201).send({ id: results.insertId });
-            }
-        }
-    );
-});
-
-// Update a book
+// Endpoint: Update a Book
 app.put('/books/:id', (req, res) => {
-    const id = req.params.id;
-    const { title, author, genre, rating, description } = req.body;
+    const { id } = req.params;
+    const { title, author, genre, rating, description, image } = req.body;
+
+    let imagePath = null;
+    if (image) {
+        const imageBuffer = Buffer.from(image, 'base64');
+        imagePath = `uploads/${Date.now()}.png`;
+        fs.writeFileSync(path.join(__dirname, imagePath), imageBuffer);
+    }
+
+    const query = `
+        UPDATE books
+        SET
+          title = ?,
+          author = ?,
+          genre = ?,
+          rating = ?,
+          description = ?,
+          cover_image = IFNULL(?, cover_image)
+        WHERE id = ?
+    `;
+    connection.query(query, [title, author, genre, rating, description, imagePath, id], (err, results) => {
+        if (err) {
+            console.error('Error updating book:', err);
+            return res.status(500).send('Error updating book');
+        }
+        res.send({ message: 'Book updated successfully' });
+    });
+});
+
+// Endpoint: Delete Books (Bulk Delete)
+app.post('/books/bulk-delete', (req, res) => {
+    const { ids } = req.body;
+
+    if (!ids || !Array.isArray(ids)) {
+        return res.status(400).send({ message: 'Invalid request format' });
+    }
+
     connection.query(
-        'UPDATE books SET title = ?, author = ?, genre = ?, rating = ?, description = ? WHERE id = ?',
-        [title, author, genre, rating, description, id],
+        'DELETE FROM books WHERE id IN (?)',
+        [ids],
         (err, results) => {
             if (err) {
-                console.error('Error updating book:', err);
-                res.status(500).send('Error updating book');
-            } else {
-                res.send({ message: 'Book updated successfully' });
+                console.error('Error deleting books:', err);
+                return res.status(500).send('Error deleting books');
             }
+            res.send({ message: 'Books deleted successfully' });
         }
     );
 });
 
-// Delete a book
-app.delete('/books/:id', (req, res) => {
-    const id = req.params.id;
-    connection.query('DELETE FROM books WHERE id = ?', [id], (err, results) => {
-        if (err) {
-            console.error('Error deleting book:', err);
-            res.status(500).send('Error deleting book');
-        } else {
-            res.send({ message: 'Book deleted successfully' });
-        }
-    });
+// Start the Server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
 });
-
-// Server setup
-app.listen(process.env.PORT || 3000, () => {
-    console.log('Server is running on port 3000');
-});
-
-// Export the app for Vercel
-module.exports = app;
